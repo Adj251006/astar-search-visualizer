@@ -419,10 +419,9 @@ def main():
     ss = st.session_state                       # remembers values between button clicks
     ss.setdefault("mode", "ready")              # ready | playing | paused | done
     ss.setdefault("index", 0)                   # how many algorithm events have been shown
-    ss.setdefault("celebrated", False)
 
     def on_start():
-        ss.mode, ss.index, ss.celebrated = "playing", 0, False
+        ss.mode, ss.index = "playing", 0
 
     def on_pause():
         ss.mode = "paused" if ss.mode == "playing" else "playing"
@@ -468,9 +467,6 @@ def main():
         draw()
         if ev[0] in ("done", "fail"):
             ss.mode = "done"
-            if not ss.celebrated:
-                ss.celebrated = True
-                st.balloons()
             break
         wait = DURATION[ev[0]] / speed
         for i in range(20):                     # small sleeps so Pause reacts quickly
