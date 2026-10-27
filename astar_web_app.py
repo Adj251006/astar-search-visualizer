@@ -246,12 +246,40 @@ def apply_event(sim, ev):
     if kind == "path":
         sim["path_edges"].add((info, n))
     if kind in ("expanded", "goal"):            # one table row per expanded node
-        g = sim["state"]["g"]
-        open_txt, _, closed_txt = queue_text(sim["state"])
-        sim["rows"].append({"Step": sim["step"], "Expanded": n, "g(n)": g[n], "h(n)": heuristic(n),
-                            "f(n)": g[n] + heuristic(n), "OPEN after": open_txt,
-                            "CLOSED after": closed_txt})
+        valid, stale = open_entries(sim["state"])   # snapshot of the real OPEN heap
+        sim["rows"].append({"step": sim["step"], "node": n, "g": sim["state"]["g"][n],
+                            "h": heuristic(n), "open": valid, "stale": stale,
+                            "closed": list(sim["state"]["order"]), "goal": kind == "goal"})
     sim["ev"] = ev
+
+
+def render_table(sim):
+    """Build the dry-run table (HTML): one row per expanded node, filled in live."""
+    kind, cur, _ = sim["ev"]
+    head = "".join(f"<th>{h}</th>" for h in ("Step", "Expanded node", "g(n)", "h(n)", "f(n) = g + h",
+                                               "OPEN after expansion (lowest f first)", "CLOSED after expansion"))
+    body = []
+    for r in sim["rows"]:
+        f = r["g"] + r["h"]
+        open_cell = (chips([f"{n}  f={fv}" for fv, n in r["open"]], "open")
+                     + (chips([f"{n}  f={fv} (old)" for fv, n in r["stale"]], "stale") if r["stale"] else ""))
+        body.append(f'<tr class="{"goalrow" if r["goal"] else ""}"><td class="num">{r["step"]}</td>'
+                    f'<td><span class="chip {"goalchip" if r["goal"] else "closed"}">{r["node"]}</span>'
+                    f'{"&nbsp; ✔ goal reached" if r["goal"] else ""}</td>'
+                    f'<td class="num">{r["g"]}</td><td class="num">{r["h"]}</td>'
+                    f'<td class="num">{r["g"]} + {r["h"]} = <b>{f}</b></td><td>{open_cell}</td>'
+                    f'<td>{chips(r["closed"], "closed")}</td></tr>')
+    if kind in ("select", "discover", "update", "worse", "skip") and cur:   # node being expanded now
+        g = sim["state"]["g"][cur]
+        body.append(f'<tr class="liverow"><td class="num">{sim["step"]}</td>'
+                    f'<td><span class="chip cur">{cur}</span>&nbsp; expanding now…</td>'
+                    f'<td class="num">{g}</td><td class="num">{heuristic(cur)}</td>'
+                    f'<td class="num">{g} + {heuristic(cur)} = <b>{g + heuristic(cur)}</b></td>'
+                    f'<td colspan="2" class="none">examining neighbours…</td></tr>')
+    if not body:
+        body.append('<tr><td colspan="7" class="none" style="text-align:center;padding:18px">'
+                    'Press Start: a new row appears each time A* expands a node.</td></tr>')
+    return f'<div class="tablewrap"><table class="dry"><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
 
 
 SVG_DEFS = ('<defs><filter id="blur" x="-80%" y="-80%" width="260%" height="260%">'
@@ -410,6 +438,22 @@ CSS = """<style>
 .hint {text-align:center; color:#64748b; font-size:.85rem; margin-top:6px;}
 .stButton > button {border-radius:12px; font-weight:800; height:2.9rem; border:1px solid #27344f;}
 label, [data-testid="stWidgetLabel"] p {color:#cbd5e1 !important;}
+.tabletitle {color:#e2e8f0; font-weight:800; font-size:1.15rem; margin:26px 0 10px;}
+.tabletitle span {color:#8b9bb4; font-weight:500; font-size:.9rem; margin-left:8px;}
+.tablewrap {overflow-x:auto; border:1px solid #27344f; border-radius:16px; background:#131c31;
+            box-shadow:0 12px 40px rgba(0,0,0,.35); margin-bottom:18px;}
+table.dry {width:100%; border-collapse:collapse; color:#e2e8f0; font-size:.92rem;}
+table.dry th {background:#0b1120; color:#8b9bb4; font-size:.8rem; letter-spacing:.03em;
+              text-align:left; padding:12px 14px; border-bottom:1px solid #27344f; white-space:nowrap;}
+table.dry td {padding:10px 14px; border-bottom:1px solid #1e293b; vertical-align:middle;}
+table.dry tr:last-child td {border-bottom:none;}
+table.dry td.num {text-align:center; font-family:"JetBrains Mono",Menlo,Consolas,monospace; white-space:nowrap;}
+table.dry th:nth-child(1), table.dry th:nth-child(3), table.dry th:nth-child(4), table.dry th:nth-child(5) {text-align:center;}
+table.dry tr.goalrow td {background:rgba(34,197,94,.10);}
+table.dry tr.liverow td {background:rgba(249,115,22,.10);}
+.chip.cur {background:rgba(249,115,22,.2); color:#fdba74; border:1px solid #f97316;}
+.chip.goalchip {background:rgba(34,197,94,.2); color:#86efac; border:1px solid #22c55e;}
+table.dry .chip {font-size:.8rem; padding:3px 10px; margin:2px 4px 2px 0;}
 </style>"""
 
 
@@ -443,8 +487,9 @@ def main():
     with right:
         panel_ph = st.empty()
         timer_ph = st.empty()
-    with st.expander("📋  Dry-run table: one row per expanded node (fills in live)"):
-        table_ph = st.empty()
+    st.markdown('<div class="tabletitle">📋 Dry-run table <span>one row per expanded node · fills in live</span></div>',
+                unsafe_allow_html=True)
+    table_ph = st.empty()
     with st.expander("🐍  The Python A* code that is running"):
         st.code(inspect.getsource(astar_steps), language="python")
 
@@ -457,7 +502,7 @@ def main():
         header_ph.markdown(render_header(sim), unsafe_allow_html=True)
         tree_ph.markdown(f'<div class="treebox">{render_svg(sim, speed)}</div>', unsafe_allow_html=True)
         panel_ph.markdown(render_panel(sim), unsafe_allow_html=True)
-        table_ph.dataframe(sim["rows"], hide_index=True, width="stretch")
+        table_ph.markdown(render_table(sim), unsafe_allow_html=True)
 
     draw()
     while ss.mode == "playing":                 # automatic playback: one real A* step at a time
